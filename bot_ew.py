@@ -7,7 +7,6 @@ AI-Бот, подсказывающий слова из букв другого 
 Fil FC AI English words
 @fil_fc_ai_ew_bot
 https://t.me/fil_fc_ai_ew_bot
-7102444889:AAESt-jESjEejW7rC6MLfVcYVoN8I7gc1ek
 """
 __version__ = '0.1'
 __author__ = 'Firip Yamagusi'
@@ -20,8 +19,8 @@ from transformers import AutoTokenizer
 from telebot import TeleBot
 from telebot.types import ReplyKeyboardMarkup, ReplyKeyboardRemove, Message
 
-# Замените 'YOUR_BOT_TOKEN' на фактический токен вашего бота
-TOKEN = '7102444889:AAESt-jESjEejW7rC6MLfVcYVoN8I7gc1ek'
+from config import TOKEN
+
 bot_name = "Fil FC AI English words | @fil_fc_ai_ew_bot"
 # Для понимания в консоли
 print(strftime("%F %T"))
