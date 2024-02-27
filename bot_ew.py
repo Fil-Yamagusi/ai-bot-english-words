@@ -18,8 +18,7 @@ import requests
 
 from transformers import AutoTokenizer
 from telebot import TeleBot
-from telebot.types import ReplyKeyboardMarkup, Message
-
+from telebot.types import ReplyKeyboardMarkup, ReplyKeyboardRemove, Message
 
 # Замените 'YOUR_BOT_TOKEN' на фактический токен вашего бота
 TOKEN = '7102444889:AAESt-jESjEejW7rC6MLfVcYVoN8I7gc1ek'
@@ -31,10 +30,14 @@ print(TOKEN, "\n")
 
 bot = TeleBot(TOKEN)
 
+# Пустое меню, может пригодиться
+hideKeyboard = ReplyKeyboardRemove()
+
+# Два популярных запроса: more и break
 markup = ReplyKeyboardMarkup(
     row_width=2,
     resize_keyboard=True)
-markup.add(* ["more", "break",])
+markup.add(*["more", "break", ])
 
 user_data = {}
 
@@ -64,6 +67,7 @@ def check_user(uid):
     global user_data
     if uid not in user_data:
         user_data[uid] = {}
+        user_data[uid]['debug'] = []
         user_data[uid]['task'] = ""
         user_data[uid]['answer'] = ""
         user_data[uid]['busy'] = False
@@ -82,9 +86,8 @@ def handle_start(m: Message):
         'Just type your question. For example:\n'
         '<i>Make up words from the letters of the word BEAUTIFUL</i>\nor\n'
         '<i>Name 10 animals with starting letter S</i>',
-        parse_mode="HTML")
-
-    # send_please_be_patient_message(user_id)
+        parse_mode="HTML",
+        reply_markup=hideKeyboard)
 
 
 # Обработчик команды /help
@@ -102,9 +105,24 @@ def handle_start(m: Message):
         '<i>Tell me 6-letter nouns starting with A and ending with P</i>\nor\n'
         '<i>Give me the longest noun with three vowels</i>\n'
         'etc.',
-        parse_mode="HTML")
+        parse_mode="HTML",
+        reply_markup=hideKeyboard)
 
-    # send_please_be_patient_message(user_id)
+
+# Часть домашнего задания - СИКРЕТНЫЙ вывод отладочной информации
+@bot.message_handler(commands=['debug'])
+def handle_start(m: Message):
+    user_id = m.from_user.id
+    check_user(user_id)
+    error_log = "is empty now"
+    if user_data[user_id]['debug']:
+        error_log = "\n".join(user_data[user_id]['debug'])
+
+    bot.send_message(
+        user_id,
+        f'<b>Error log for user uid={user_id}</b>\n\n' + error_log,
+        parse_mode="HTML",
+        reply_markup=hideKeyboard)
 
 
 # Основная обработка входящих запросов
@@ -114,55 +132,74 @@ def handle_ask_gpt(m: Message):
     user_id = m.from_user.id
     check_user(user_id)
 
-    if m.text.lower() in ["break"]:
+    # Один раз модель зависла. На всякий случай кнопка для оттопыривания
+    if m.text.lower() in ["break", "/break"]:
         task = ""
+        user_data[user_id]['task'] = ""
         user_data[user_id]['answer'] = ""
         user_data[user_id]['busy'] = False
+        err_msg = strftime("%F %T") + ": BREAK for some reason"
+        user_data[user_id]['debug'].append(err_msg)
         bot.send_message(
             user_id,
             'Something went wrong!\n'
             'Wait for a while and try another task.')
         return
 
+    # Чтобы не спамил запросами
+    if user_data[user_id]['busy']:
+        err_msg = strftime("%F %T") + ": SPAM detected"
+        user_data[user_id]['debug'].append(err_msg)
+        bot.send_message(
+            user_id,
+            f"❎ Please, don't spam! This task will be ignored.")
+        return
+
     # Ругаемся, если слишком много токенов в запросе
     try:
         if count_tokens(m.text) > max_tokens_in_task:
+            err_msg = strftime("%F %T") + ": prompt is too long"
+            user_data[user_id]['debug'].append(err_msg)
             bot.send_message(
                 user_id,
                 'ℹ️ Your prompt is too long. Please try again.')
             return
     except Exception as e:
+        err_msg = strftime("%F %T") + ": error while using count_tokens()"
+        user_data[user_id]['debug'].append(err_msg)
         bot.send_message(
             user_id,
             f'❎ Error: {e}')
         return
 
-    # Чтобы не спамил запросами
-    if user_data[user_id]['busy']:
-        bot.send_message(
-            user_id,
-            f"❎ Please, don't spam! This task will be ignored.")
-        return
-    else:
-        user_data[user_id]['busy'] = True
-
     # Если просит продолжить ответ
-    task = m.text
-
-    if m.text.lower() in ["more", "continue"]:
-        task = user_data[user_id]['answer'] + task
-        bot.send_message(
-            user_id,
-            '...I will continue...')
+    if m.text.lower() in ["more", "continue", "/more", "/continue"]:
+        if not user_data[user_id]['task']:
+            err_msg = strftime("%F %T") + ": asked for more while task is empty"
+            user_data[user_id]['debug'].append(err_msg)
+            bot.send_message(
+                user_id,
+                f'You asked for more? There is no task!',
+                parse_mode="HTML")
+            return
+        else:
+            bot.send_message(
+                user_id,
+                '...I will continue...')
     else:
+        user_data[user_id]['task'] = m.text
         user_data[user_id]['answer'] = ""
         bot.send_message(
             user_id,
-            f'New task: <i>{task}</i>',
+            f'New task: <i>{user_data[user_id]['task']}</i>',
             parse_mode="HTML")
 
-    # Предупреждаем, что будет долго и отправляем запрос в GPT
+    user_data[user_id]['busy'] = True
+
+    # Предупреждаем, что будет долго
     send_please_be_patient_message(user_id)
+
+    # Проверенный кусок кода API GPT в консоли
     resp = requests.post(
         'http://localhost:1234/v1/chat/completions',
         headers={"Content-Type": "application/json"},
@@ -172,7 +209,7 @@ def handle_ask_gpt(m: Message):
                 {"role": "system",
                  "content": system_content},
                 {"role": "user",
-                 "content": task},
+                 "content": user_data[user_id]['task']},
                 {"role": "assistant",
                  "content": assistant_content +
                             user_data[user_id]['answer']},
@@ -182,26 +219,32 @@ def handle_ask_gpt(m: Message):
         }
     )
 
+    # Обрабатываем ответ на случай ошибок
     if resp.status_code == 200 and 'choices' in resp.json():
         result = resp.json()['choices'][0]['message']['content']
         if result == "":
+            err_msg = strftime("%F %T") + ": model returned an empty string"
+            user_data[user_id]['debug'].append(err_msg)
             bot.send_message(
                 user_id,
                 'ℹ️ I have said enough.')
+        # Вот в этой веточке успешный результат - показываем в телеграме
         else:
             user_data[user_id]['answer'] += result
             bot.send_message(
                 user_id,
                 result,
                 reply_markup=markup)
-            user_data[user_id]['busy'] = False
     else:
+        err_msg = strftime("%F %T") + ": GPT is not avaliable now"
+        user_data[user_id]['debug'].append(err_msg)
         bot.send_message(
             user_id,
             f'GPT is not avaliable now.\n'
             f'Error message: <b>{resp.json()}</b>',
             parse_mode="HTML")
 
+    user_data[user_id]['busy'] = False
 
 # Запуск бота
 bot.infinity_polling()
